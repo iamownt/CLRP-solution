@@ -16,6 +16,8 @@ def main():
     ###
     # generate prediction for 1. inference 2. 5fold labels
     ###
+    # for Debug
+    # sys.argv.extend(["./extra_data/extra_excerpt.csv","./extra_data/pseudo_1/","1", "1","./models/roberta_1/"])
     source_path = sys.argv[1]
     target_path = sys.argv[2]
     num_of_models = int(sys.argv[3])
@@ -25,7 +27,7 @@ def main():
     
     preds = []
     for i in range(num_of_models):
-        preds.append(get_single_model(model_dirs[i],data))
+        preds.append(get_single_model(model_dirs[i],data))  #  [[model_1 fold prediction], [model 1 fold prediction]]
         
     if sys.argv[4] == '1':
         #hard coded weight for when one of each of roberta and deberta is used to predict

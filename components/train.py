@@ -10,23 +10,29 @@ from tqdm import tqdm
 import numpy as np
 import os
 import gc
+from accelerate import Accelerator
 gc.enable()
+from accelerate import DistributedDataParallelKwargs
+
 
 def run_fold_ft(fold,config,train_data,tokenizer,t_bar):
-    device = "cuda:0"
+    # device = "cuda:0"
     #prep train/val datasets
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+
     train_dataset = CLRPDataset_finetune(True, fold,train_data,tokenizer)
     val_dataset = CLRPDataset_finetune(False, fold,train_data,tokenizer)
     
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=16, shuffle=False, pin_memory=True)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=config["eval_batch_size"], shuffle=False, pin_memory=True)
     
-    total_train_steps = int(len(train_loader) * config['num_epoch'] / config['accumulation_steps'])
+    total_train_steps = int(len(train_loader) * config['num_epoch'] / config['accumulation_steps'] / config['n_gpu'])
     val_step = 1
     min_valid_loss = np.inf
     
     #load model
-    model = Custom_bert(config['model_dir']).to(device)
+    model = Custom_bert(config['model_dir'])  #.to(device)
     _ = model.eval()
 
     model.load_state_dict(torch.load(config['pretrained_path']), strict=False)
@@ -39,18 +45,19 @@ def run_fold_ft(fold,config,train_data,tokenizer,t_bar):
     min_step = 0
     last_save_step = 0
     last_save_index = 0
+    model, optimizer, train_loader, val_loader = accelerator.prepare(model, optimizer, train_loader, val_loader)
 
     #seed_everything(seed=config['seed_'] + fold)
 
-    optimizer.zero_grad()
+    # optimizer.zero_grad()
     for epoch in range(config['num_epoch']):
         model.train()
         count = 0
         total_loss = 0
         for batch in train_loader:
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            target = batch['target'].to(device)
+            input_ids = batch['input_ids'] # to(device)
+            attention_mask = batch['attention_mask'] # to(device)
+            target = batch['target'] # to(device)
 
             outputs = model(input_ids, attention_mask)
 
@@ -60,7 +67,8 @@ def run_fold_ft(fold,config,train_data,tokenizer,t_bar):
 
             total_loss+=torch.pow(nn.MSELoss()(torch.squeeze(outputs,1),target),0.5).item() / config['accumulation_steps']
 
-            loss.backward()
+            # loss.backward()
+            accelerator.backward(loss)
 
             if (count+1) % config['accumulation_steps'] == 0:
                 optimizer.step()
@@ -70,7 +78,6 @@ def run_fold_ft(fold,config,train_data,tokenizer,t_bar):
                 total_loss = 0
             else:
                 count+=1
-
             #only save in radius of certain step
             if step >= (config['save_center']-config['save_radius']) and step <= (config['save_center']+config['save_radius']):
                 val_step = 1
@@ -82,20 +89,27 @@ def run_fold_ft(fold,config,train_data,tokenizer,t_bar):
             if ((step+1) % val_step == 0 and count == 0) and do_val:
                 model.eval()
                 l_val = nn.MSELoss(reduction='sum')
+                losses = []
                 with torch.no_grad():
                     total_loss_val = 0
                     for batch in val_loader:
-                        input_ids = batch['input_ids'].to(device)
-                        attention_mask = batch['attention_mask'].to(device)
+                        input_ids = batch['input_ids']  # to(device)
+                        attention_mask = batch['attention_mask']  # .to(device)
                         outputs = model(input_ids, attention_mask)
 
-                        cls_loss_val = l_val(torch.squeeze(outputs),batch['target'].to(device))
+                        cls_loss_val = l_val(torch.squeeze(outputs), batch['target'])
+                        #  losses.append(accelerator.gather(loss.repeat(args.per_device_eval_batch_size))) 原因是原先transformers模型output.loss返回的是一个平均值!!
+                        # losses.append(accelerator.gather(cls_loss_val.repeat(config["eval_batch_size"])))
+                        losses.append(accelerator.gather(cls_loss_val))
 
-                        val_loss = cls_loss_val
-
-                        total_loss_val+=val_loss.item()
-                    total_loss_val/=len(val_dataset)
-                    total_loss_val = total_loss_val**0.5
+                        # val_loss = cls_loss_val
+                    losses = torch.cat(losses)
+                    losses = losses[: len(val_dataset)]
+                    total_loss_val = torch.sqrt(torch.mean(losses)).item()
+                    #
+                    # total_loss_val+=val_loss.item()
+                    # total_loss_val/=len(val_dataset)
+                    # total_loss_val = total_loss_val**0.5
 
                     if min_valid_loss > total_loss_val and step >= (config['save_center']-config['save_radius']) and step <= (config['save_center']+config['save_radius']):
                         #saves model with lower loss
@@ -107,9 +121,16 @@ def run_fold_ft(fold,config,train_data,tokenizer,t_bar):
                         if not os.path.isdir(config['save_path']):
                             os.mkdir(config['save_path'])
                         if 'roberta' in config['model_dir']:
-                            torch.save(model.state_dict(), config['save_path']+f'roberta_large_{fold}.pt')
+                            # torch.save(model.state_dict(), config['save_path']+f'roberta_large_{fold}.pt') accelerator modified
+                            accelerator.wait_for_everyone()
+                            unwrapped_model = accelerator.unwrap_model(model)
+                            accelerator.save(unwrapped_model.state_dict(), config['save_path']+f'roberta_large_{fold}.pt')
+                            # unwrapped_model.save_pretrained(config['save_path'], save_function=accelerator.save)
                         else:
-                            torch.save(model.state_dict(), config['save_path']+f'deberta_large_{fold}.pt')
+                            accelerator.wait_for_everyone()
+                            unwrapped_model = accelerator.unwrap_model(model)
+                            accelerator.save(unwrapped_model.state_dict(), config['save_path']+f'deberta_large_{fold}.pt')
+                            # torch.save(model.state_dict(), config['save_path']+f'deberta_large_{fold}.pt')
                 model.train()
             step+=1
             t_bar.update(1)
@@ -122,7 +143,7 @@ def train_ft(config):
     seed_everything(config['seed_'])
     
     train_data = pd.read_csv("./data/train.csv")
-    train_data = create_folds(train_data, num_splits=5)
+    train_data = create_folds(train_data, num_splits=5)  # 用Sturge's rule并且做了StratifiedKFold
     model_dir = config['model_dir']
     tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True, model_max_length=256)
     
@@ -230,8 +251,10 @@ def train_pseudo(config, label_path):
     return min_valid_loss
 
 def train_pseudo_5fold(config, label_path):
-    device = "cuda:0"
+    # device = "cuda:0"
     seed_everything(config['seed_'])
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
 
     train_data = pd.read_csv("./data/train.csv")
     train_data = create_folds(train_data, num_splits=5)
@@ -241,25 +264,27 @@ def train_pseudo_5fold(config, label_path):
     min_val_losses = []
     for fold in range(config['n_folds']):
         train_dataset = CLRPDataset_pseudo_5fold(True,fold,train_data,tokenizer,label_path)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, pin_memory=True)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, pin_memory=True, num_workers=6)
         
         val_dataset = CLRPDataset_pseudo_5fold(False,fold,train_data,tokenizer,label_path)
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=16, shuffle=False, pin_memory=True)
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=16, shuffle=False, pin_memory=True, num_workers=6)
 
         if fold == 0:
             t_bar = tqdm(total=((len(train_dataset)*5//config['batch_size'])+1)*config['num_epoch'])
             
-        total_train_steps = int(len(train_loader) * config['num_epoch'] / config['accumulation_steps'])
         val_step = 100*config['accumulation_steps']
         min_valid_loss = np.inf
 
-        model = Custom_bert(config['model_dir']).to(device)
+        model = Custom_bert(config['model_dir']) # to(device)
         _ = model.eval()
 
         if config['pretrained_path'] not in [None,'None']:
             model.load_state_dict(torch.load(config['pretrained_path']), strict=False)
 
         optimizer = get_optimizer(model,config)
+        model, optimizer, train_loader, val_loader = accelerator.prepare(model, optimizer, train_loader, val_loader)
+
+        total_train_steps = int(len(train_loader) * config['num_epoch'] / config['accumulation_steps']) / config["n_gpu"]
         lr_scheduler = get_scheduler(optimizer,total_train_steps,config)
 
         step = 0
@@ -273,9 +298,9 @@ def train_pseudo_5fold(config, label_path):
             count = 0
             total_loss = 0
             for batch in train_loader:
-                input_ids = batch['input_ids'].to(device)
-                attention_mask = batch['attention_mask'].to(device)
-                target = batch['target'].to(device)
+                input_ids = batch['input_ids'] # .to(device)
+                attention_mask = batch['attention_mask'] # .to(device)
+                target = batch['target'] # .to(device)
 
                 outputs = model(input_ids, attention_mask)
 
@@ -300,18 +325,23 @@ def train_pseudo_5fold(config, label_path):
                     l_val = nn.MSELoss(reduction='sum')
                     with torch.no_grad():
                         total_loss_val = 0
+                        losses = []
                         for batch in val_loader:
-                            input_ids = batch['input_ids'].to(device)
-                            attention_mask = batch['attention_mask'].to(device)
+                            input_ids = batch['input_ids'] # to(device)
+                            attention_mask = batch['attention_mask'] # .to(device)
                             outputs = model(input_ids, attention_mask)
 
-                            cls_loss_val = l_val(torch.squeeze(outputs),batch['target'].to(device))
+                            cls_loss_val = l_val(torch.squeeze(outputs),batch['target'])
+                            losses.append(accelerator.gather(cls_loss_val))
 
-                            val_loss = cls_loss_val
+                        losses = torch.cat(losses)
+                        losses = losses[: len(val_dataset)]
+                        total_loss_val = torch.sqrt(torch.mean(losses)).item()
+                            # val_loss = cls_loss_val
 
-                            total_loss_val+=val_loss.item()
-                        total_loss_val/=len(val_dataset)
-                        total_loss_val = total_loss_val**0.5
+                        #     total_loss_val+=val_loss.item()
+                        # total_loss_val/=len(val_dataset)
+                        # total_loss_val = total_loss_val**0.5
 
                     if min_valid_loss > total_loss_val and epoch > 0:
                         min_step = step
@@ -321,9 +351,15 @@ def train_pseudo_5fold(config, label_path):
                         if not os.path.isdir(config['save_path']):
                             os.mkdir(config['save_path'])
                         if 'roberta' in config['model_dir']:
-                            torch.save(model.state_dict(), config['save_path']+f'roberta_large_{fold}.pt')
+                            accelerator.wait_for_everyone()
+                            unwrapped_model = accelerator.unwrap_model(model)
+                            accelerator.save(unwrapped_model.state_dict(), config['save_path']+f'roberta_large_{fold}.pt')
+                            # torch.save(model.state_dict(), config['save_path']+f'roberta_large_{fold}.pt')
                         else:
-                            torch.save(model.state_dict(), config['save_path']+f'deberta_large_{fold}.pt')
+                            accelerator.wait_for_everyone()
+                            unwrapped_model = accelerator.unwrap_model(model)
+                            accelerator.save(unwrapped_model.state_dict(), config['save_path']+f'deberta_large_{fold}.pt')
+                            # torch.save(model.state_dict(), config['save_path']+f'deberta_large_{fold}.pt')
                     model.train()
                 step+=1
                 t_bar.update(1)

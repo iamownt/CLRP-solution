@@ -1,6 +1,121 @@
 from transformers import AdamW
 import torch
 
+def get_optimizer_debertaMLM(model, config):
+    layers = len(model.deberta.encoder.layer)
+    no_decay = ["bias", "LayerNorm.weight"]
+    high_lr_head = ["layer_weights"]
+    ### not in high_lr_head
+    params_lst = [{'params': [p for n, p in model.named_parameters()
+                              if not any(en in n for en, ep in model.deberta.encoder.layer.named_parameters())
+                              and not any(nd in n for nd in no_decay)
+                              and not any(nd in n for nd in high_lr_head)],
+                   'lr': config['head_lr'],
+                   'weight_decay': config['weight_decay']
+                   }]
+    params_lst.append({'params': [p for n, p in model.named_parameters()
+                                  if not any(en in n for en, ep in model.deberta.encoder.layer.named_parameters())
+                                  and any(nd in n for nd in no_decay)
+                                  and not any(nd in n for nd in high_lr_head)],
+                       'lr': config['head_lr'],
+                       'weight_decay': 0.0
+                       })
+    ###
+    ### in high_lr_head
+    params_lst.append({'params': [p for n, p in model.named_parameters()
+                                  if not any(en in n for en, ep in model.deberta.encoder.layer.named_parameters())
+                                  and not any(nd in n for nd in no_decay)
+                                  and any(lw in n for lw in high_lr_head)],
+                       'lr': config['base_lr'],
+                       'weight_decay': config['weight_decay']
+                       })
+    params_lst.append({'params': [p for n, p in model.named_parameters()
+                                  if not any(en in n for en, ep in model.deberta.encoder.layer.named_parameters())
+                                  and any(nd in n for nd in no_decay)
+                                  and any(lw in n for lw in high_lr_head)],
+                       'lr': config['base_lr'],
+                       'weight_decay': 0.0
+                       })
+    ###
+    parts = 3
+    for i, j in zip(range(layers - 1, -1, -int(layers / parts)), range(0, layers, int(layers / parts))):
+        for k in range(int(layers / parts)):
+            param_dict1 = {'params': [p for n, p in model.deberta.encoder.layer[i - k].named_parameters()
+                                      if not any(nd in n for nd in no_decay)],
+                           'weight_decay': config['weight_decay'],
+                           'lr': pow(config['layerwise_decay_rate'], j) * config['base_lr']
+                           }
+            param_dict2 = {'params': [p for n, p in model.deberta.encoder.layer[i - k].named_parameters()
+                                      if any(nd in n for nd in no_decay)],
+                           'weight_decay': 0.0,
+                           'lr': pow(config['layerwise_decay_rate'], j) * config['base_lr']
+                           }
+            params_lst.append(param_dict1)
+            params_lst.append(param_dict2)
+
+    optimizer = AdamW(params_lst, betas=config['betas'])
+
+    return optimizer
+
+
+
+
+def get_optimizer_bertMLM(model, config):
+    layers = len(model.bert.encoder.layer)
+    no_decay = ["bias", "LayerNorm.weight"]
+    high_lr_head = ["layer_weights"]
+    ### not in high_lr_head
+    params_lst = [{'params': [p for n, p in model.named_parameters()
+                              if not any(en in n for en, ep in model.bert.encoder.layer.named_parameters())
+                              and not any(nd in n for nd in no_decay)
+                              and not any(nd in n for nd in high_lr_head)],
+                   'lr': config['head_lr'],
+                   'weight_decay': config['weight_decay']
+                   }]
+    params_lst.append({'params': [p for n, p in model.named_parameters()
+                                  if not any(en in n for en, ep in model.bert.encoder.layer.named_parameters())
+                                  and any(nd in n for nd in no_decay)
+                                  and not any(nd in n for nd in high_lr_head)],
+                       'lr': config['head_lr'],
+                       'weight_decay': 0.0
+                       })
+    ###
+    ### in high_lr_head
+    params_lst.append({'params': [p for n, p in model.named_parameters()
+                                  if not any(en in n for en, ep in model.bert.encoder.layer.named_parameters())
+                                  and not any(nd in n for nd in no_decay)
+                                  and any(lw in n for lw in high_lr_head)],
+                       'lr': config['base_lr'],
+                       'weight_decay': config['weight_decay']
+                       })
+    params_lst.append({'params': [p for n, p in model.named_parameters()
+                                  if not any(en in n for en, ep in model.bert.encoder.layer.named_parameters())
+                                  and any(nd in n for nd in no_decay)
+                                  and any(lw in n for lw in high_lr_head)],
+                       'lr': config['base_lr'],
+                       'weight_decay': 0.0
+                       })
+    ###
+    parts = 3
+    for i, j in zip(range(layers - 1, -1, -int(layers / parts)), range(0, layers, int(layers / parts))):
+        for k in range(int(layers / parts)):
+            param_dict1 = {'params': [p for n, p in model.bert.encoder.layer[i - k].named_parameters()
+                                      if not any(nd in n for nd in no_decay)],
+                           'weight_decay': config['weight_decay'],
+                           'lr': pow(config['layerwise_decay_rate'], j) * config['base_lr']
+                           }
+            param_dict2 = {'params': [p for n, p in model.bert.encoder.layer[i - k].named_parameters()
+                                      if any(nd in n for nd in no_decay)],
+                           'weight_decay': 0.0,
+                           'lr': pow(config['layerwise_decay_rate'], j) * config['base_lr']
+                           }
+            params_lst.append(param_dict1)
+            params_lst.append(param_dict2)
+
+    optimizer = AdamW(params_lst, betas=config['betas'])
+
+    return optimizer
+
 def get_optimizer(model,config):
     # divide encoder layers into 3 groups and assign different lr
     # head lr is set separately

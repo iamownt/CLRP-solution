@@ -54,12 +54,13 @@ def init_params(module_lst):
                 torch.nn.init.xavier_uniform_(param)
     return
 
-def generate_config(model_type,pretrained_path,save_path,lr_type,lr_setting):
+# ro ./models/roberta_large_pretrain.pt ./models/roberta_1/ custom 1
+def generate_config(model_type,pretrained_path,save_path,lr_type,lr_setting,cls=None):
     config = {'model_dir': './pretrained/roberta-large/',
               'n_folds': 5,
               'num_epoch': 3,
               'weight_decay': 0.01,
-              'head_lr': 1e-4,
+              'head_lr': 1e-4,   # 相对于lr_setting 1 学习率减少了10倍
               'weight_lr': 5e-2,
               'base_lr': 7e-5,
               'min_lr': 2e-5,
@@ -76,19 +77,23 @@ def generate_config(model_type,pretrained_path,save_path,lr_type,lr_setting):
               'save_center': 330,
               'save_radius': 5,
               'betas': (0.9, 0.999),
+              'n_gpu':2,
+              'eval_batch_size':16
          }
     config['pretrained_path'] = pretrained_path
     config['save_path'] = save_path
     config['lr_type'] = lr_type
+    if cls != None:
+        config["classification"] = True
     if model_type == 'ro':
         config['model_dir'] = './pretrained/roberta-large/'
-        config['batch_size'] = 16
-        config['accumulation_steps'] = 1
+        config['batch_size'] = 1
+        config['accumulation_steps'] = 16
         config['pseudo_save_name'] = 'roberta_large_single.pt'
     elif model_type == 'de':
         config['model_dir'] = './pretrained/deberta-large/'
-        config['batch_size'] = 8
-        config['accumulation_steps'] = 2
+        config['batch_size'] = 1
+        config['accumulation_steps'] = 16
         config['save_center'] = 660
         config['save_radius'] = 10
         config['pseudo_save_name'] = 'deberta_large_single.pt'
@@ -100,7 +105,7 @@ def generate_config(model_type,pretrained_path,save_path,lr_type,lr_setting):
         config['base_lr']= 7e-6
         config['min_lr']= 2e-6
         config['low_lr']= 1e-6
-    elif lr_setting == '3':
+    elif lr_setting == '3':  # 相对于2所有lr减少了1倍
         config['head_lr']= 5e-5
         config['weight_lr']= 2e-3
         config['base_lr']= 3e-5

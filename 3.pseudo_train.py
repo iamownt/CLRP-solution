@@ -13,6 +13,8 @@ def main():
     ###
     # training using extra training data
     ###
+    # python 3.pseudo_train.py de ./extra_data/pseudo_1/ ./models/deberta_1/ 1
+    sys.argv.extend(["de", "./extra_data/pseudo_1/", "./models/deberta_1/", "1"])
     config = generate_config(sys.argv[1],'None',sys.argv[3],'custom','2')
     if sys.argv[4]=='0':
         min_valid_loss = train_pseudo(config,sys.argv[2])

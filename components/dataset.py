@@ -1,6 +1,62 @@
 import torch
 import pandas as pd
 
+class QyMLMDataset(torch.utils.data.Dataset):
+    def __init__(self, is_train, texts, tokenizer):
+        self.is_train = is_train
+        self.tokenizer = tokenizer
+
+        texts["text_a"] = texts["text_a"].apply(lambda x: str(x))  # BAD 465202
+        texts["text_b"] = texts["text_b"].apply(lambda x: str(x))
+        texts.drop_duplicates(inplace=True)
+
+        self.text_a = texts["text_a"].to_list()
+        self.text_b = texts["text_b"].to_list()
+
+        ### only use portion of data
+        if is_train:
+            length = int(len(self.text_a) / 1)
+            self.text_a = self.text_a[:length]
+            self.text_b = self.text_b[:length]
+        else:
+            length = int(len(self.text_a) / 100)
+            self.text_a = self.text_a[:length]
+            self.text_b = self.text_b[:length]
+
+        ###
+    def __getitem__(self, idx):
+        item = self.tokenizer([[self.text_a[idx], self.text_b[idx]]], add_special_tokens=True, is_split_into_words=False,
+                              padding="max_length", truncation=True, return_tensors="pt")
+        item['labels'] = item['input_ids'].clone()
+        probability_matrix = torch.full(item['labels'].shape, 0.15)
+        special_tokens_mask = [self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in
+                               item['labels'].tolist()]
+        probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=torch.bool), value=0.0)
+        masked_indices = torch.bernoulli(probability_matrix).bool()
+        item['labels'][~masked_indices] = -100
+
+        # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
+        indices_replaced = torch.bernoulli(torch.full(item['labels'].shape, 0.8)).bool() & masked_indices
+        item['input_ids'][indices_replaced] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
+
+        # 10% of the time, we replace masked input tokens with random word
+        indices_random = torch.bernoulli(
+            torch.full(item['labels'].shape, 0.5)).bool() & masked_indices & ~indices_replaced
+        random_words = torch.randint(len(self.tokenizer), item['labels'].shape, dtype=torch.long)
+        item['input_ids'][indices_random] = random_words[indices_random]
+
+        # The rest of the time (10% of the time) we keep the masked input tokens unchanged
+        # 为什么0，因为生成的比如是(1, 256）这样子，squeeze掉第一维
+        item['input_ids'] = item['input_ids'][0]
+        item['attention_mask'] = item['attention_mask'][0]
+        item['token_type_ids'] = item['token_type_ids'][0]
+        item['labels'] = item['labels'][0]
+        return item
+
+    def __len__(self):
+        return len(self.text_a)
+
+
 class MLMDataset(torch.utils.data.Dataset):
     def __init__(self, is_train, texts, tokenizer):
         self.is_train = is_train
@@ -55,6 +111,7 @@ class CLRPDataset_finetune(torch.utils.data.Dataset):
         self.excerpt = df['excerpt'].to_numpy()
         self.target = df['target'].to_numpy()
 
+
     def __getitem__(self, idx):
         tokenized = self.tokenizer(self.excerpt[idx],return_tensors='pt',
                               max_length=256,
@@ -74,13 +131,15 @@ class CLRPDataset_pred(torch.utils.data.Dataset):
     def __init__(self,df,tokenizer):
         self.excerpt = df['excerpt'].to_numpy()
         self.tokenizer = tokenizer
+
     
     def __getitem__(self,idx):
         encode = self.tokenizer(self.excerpt[idx],return_tensors='pt',
                                 max_length=256,
                                 padding='max_length',truncation=True)
         encoded = {'input_ids':encode['input_ids'][0],
-                   'attention_mask':encode['attention_mask'][0]
+                   'attention_mask':encode['attention_mask'][0],
+                   "ids": idx,
                   }
         
         return encoded

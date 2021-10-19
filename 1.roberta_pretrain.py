@@ -12,10 +12,10 @@ def main():
     ###
     # MLM pretrain with training data
     ###
-    device = "cuda:0"
+    # device = "cuda:0"
     model_dir = './pretrained/roberta-large/'
     tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True, model_max_length=256, add_prefix_space=True)
-    model = RobertaForMaskedLM.from_pretrained(model_dir, local_files_only=True).to(device)
+    model = RobertaForMaskedLM.from_pretrained(model_dir, local_files_only=True)
 
     df = pd.read_csv('./data/train.csv')[['excerpt']]
     texts = df['excerpt'].tolist()
@@ -35,8 +35,8 @@ def main():
         'min_lr':4e-5,
         'low_lr':2e-5,
         'n_epoch':5,
-        'bs':16,
-        'ga':1,
+        'bs':6,
+        'ga':2,
         'lr_scheduler_mul_factor':2,
         'weight_decay':0.01,
         'warm_up_ratio':0.2,
@@ -49,7 +49,8 @@ def main():
     }
 
     train_len = len(train_dataset)
-    total_train_steps = int(train_len * config['n_epoch'] / config['ga'] / config['bs']) 
+    n_gpu = 2
+    total_train_steps = int(train_len * config['n_epoch'] / config['ga'] / config['bs']/ n_gpu)
     optimizer = get_optimizer_robertaMLM(model,config)
     lr_scheduler = get_scheduler(optimizer, total_train_steps, config)
 

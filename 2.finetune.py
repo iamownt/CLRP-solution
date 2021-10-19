@@ -18,6 +18,7 @@ def main():
     # training using provided training data
     ###
     config = generate_config(sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4],sys.argv[5])
+    # config = generate_config('ro', './models/roberta_large_pretrain.pt', './models/roberta_1/', 'custom', '1')
     losses = train_ft(config)
     print(np.mean(losses),'\n',losses)
 

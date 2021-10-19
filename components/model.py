@@ -9,8 +9,8 @@ class Custom_bert(nn.Module):
 
         #load base model
         config = AutoConfig.from_pretrained(model_dir)
-        config.update({"output_hidden_states":True, 
-                       "hidden_dropout_prob": 0.0,
+        config.update({"output_hidden_states":True, # 每层的hidden输出和embedding output
+                       "hidden_dropout_prob": 0.0,  # 对于回归问题，关闭dropout是一个很好的方法
                        "layer_norm_eps": 1e-7})                       
         
         self.base = AutoModel.from_pretrained(model_dir, config=config)  
@@ -23,7 +23,7 @@ class Custom_bert(nn.Module):
         #weights for weighted layer average
         n_weights = 24
         weights_init = torch.zeros(n_weights).float()
-        weights_init.data[:-1] = -3
+        weights_init.data[:-1] = -3  # 其余层0.0232  最后一层0.4662
         self.layer_weights = torch.nn.Parameter(weights_init)
         
         #attention head
@@ -31,7 +31,7 @@ class Custom_bert(nn.Module):
             nn.Linear(1024, 1024),            
             nn.Tanh(),
             nn.Linear(1024, 1),
-            nn.Softmax(dim=1)
+            nn.Softmax(dim=1)  # 一共[bs, 256, 1] 对第二维度做softmax
         ) 
         self.cls = nn.Sequential(
             nn.Linear(dim,1)
@@ -49,7 +49,7 @@ class Custom_bert(nn.Module):
         #weighted average of all encoder outputs
         cls_outputs = torch.stack(
             [self.dropout(layer) for layer in base_output['hidden_states'][-24:]], dim=0
-        )
+        )  # [24, 16, 256, 1024]
         cls_output = (torch.softmax(self.layer_weights, dim=0).unsqueeze(1).unsqueeze(1).unsqueeze(1) * cls_outputs).sum(0)
     
         #multisample dropout
