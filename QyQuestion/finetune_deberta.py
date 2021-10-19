@@ -9,7 +9,7 @@
 #    3.pseudo finetune (use lr type '3stage')
 import sys
 
-sys.path.append("/hhd/wt106/")
+# sys.path.append("/hhd/wt106/")
 
 import os
 from components_reg.train import train_ft

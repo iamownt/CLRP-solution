@@ -17,7 +17,7 @@ from transformers import DataCollatorWithPadding
 
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 def run_fold_ft(fold,config,train_data,tokenizer,t_bar):
     # device = "cuda:0"
@@ -46,7 +46,7 @@ def run_fold_ft(fold,config,train_data,tokenizer,t_bar):
     model.load_state_dict(torch.load(config['pretrained_path'], accelerator.device), strict=False)
     if config["finetune_long"]:
         print("\n FineTune With Long Sequence: !!! Load Pretrained State Dict\n")
-        model.load_state_dict(torch.load(f"/hhd/wt106/QyQuestion/Qymodels/roberta_1/roberta_large_{fold}.pt", accelerator.device), strict=True)
+        model.load_state_dict(torch.load(f"./Qymodels/roberta_1/roberta_large_{fold}.pt", accelerator.device), strict=True)
 
     #get optimizer and scheduler
     optimizer = get_optimizer(model,config)
@@ -165,9 +165,9 @@ def train_ft(config, resume_from_fold=0):
     train_data = create_folds(train_data, num_splits=5)  # 用Sturge's rule并且做了StratifiedKFold
     model_dir = config['model_dir']
     if config["model_type"]!="de":
-        tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True, model_max_length=32)
+        tokenizer = AutoTokenizer.from_pretrained(model_dir, local_files_only=True, model_max_length=128)
     else:
-        tokenizer = BertTokenizer.from_pretrained(model_dir, local_files_only=True, model_max_length=32)
+        tokenizer = BertTokenizer.from_pretrained(model_dir, local_files_only=True, model_max_length=128)
 
     t_bar = tqdm(total=((533982*0.8//config['batch_size'])+1)*config['num_epoch']*config['n_folds']/config["n_gpu"])
     # t_bar = tqdm(total=((51611*0.8//config['batch_size'])+1)*config['num_epoch']*config['n_folds']/config["n_gpu"])
