@@ -103,8 +103,8 @@ class CLRPDataset_finetune(torch.utils.data.Dataset):
     def __init__(self, is_train, fold, train_data, tokenizer, config):
         self.is_train = is_train
         self.tokenizer = tokenizer
-        train_length = pd.read_csv("/hhd/wt106/QyQuestion/QyData/train_length.csv")
-        train_data = pd.concat([train_data, train_length], axis=1)
+        # train_length = pd.read_csv("/hhd/wt106/QyQuestion/QyData/train_length.csv")
+        # train_data = pd.concat([train_data, train_length], axis=1)
         train_data["text_a"] = train_data["text_a"].apply(lambda x: str(x))  # BAD 465202
         train_data["text_b"] = train_data["text_b"].apply(lambda x: str(x))
         train_data.drop_duplicates(inplace=True)
